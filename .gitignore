@@ -1,0 +1,44 @@
+# Go build artifacts
+bin/
+dist/
+build/
+.gocache/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage*.out
+*.coverprofile
+
+# Dependencies (unvendored by default)
+vendor/
+
+# Editors / IDE
+.vscode/
+.idea/
+*.iml
+.fleet/
+.history/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local configs / secrets (prevent accidental commit)
+.claude/
+.gemini/
+.codex/
+.env
+.env.*
+*.bak
+
+# Release archives
+*.tar.gz
+*.zip
+/tks
+/agtok
