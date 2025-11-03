@@ -1,3 +1,5 @@
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/vaspike/agtok/total?style=for-the-badge&color=orange)
+
 # 1. Introduction
 
 agtok is a tool for centrally managing and switching tokens and base URLs for three common CLIs with a single command: claude-code, gemini-cli, and codex-cli. It supports both interactive TUI and command-line interface (CLI). It manages presets grouped by Agent, supports preview and application, and ensures atomic writes with backups.
