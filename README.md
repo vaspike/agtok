@@ -1,3 +1,5 @@
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/vaspike/agtok/total?style=for-the-badge&color=orange)
+
 # 1. Introduction
 
 agtok is a tool for centrally managing and switching tokens and base URLs for three common CLIs with a single command: claude-code, gemini-cli, and codex-cli. It supports both interactive TUI and command-line interface (CLI). It manages presets grouped by Agent, supports preview and application, and ensures atomic writes with backups.
@@ -10,7 +12,20 @@ agtok is a tool for centrally managing and switching tokens and base URLs for th
 
 ## Install agtok
 
-To be added
+### Method 1: Brew install
+
+```bash
+brew tap vaspike/homebrew-agtok && brew install agtok
+```
+### Method 2: Download Release
+1. Visit the [Releases page](https://github.com/vaspike/agtok/releases)
+2. Download the corresponding release
+3. Unpacking release
+4. Execute in a terminal(create a soft link):
+   ```bash
+   sudo ln -sfn "$PWD/agtok" /usr/local/bin/agtok
+   ```
+
 
 ## Initialize Presets, run in your usual terminal:
 

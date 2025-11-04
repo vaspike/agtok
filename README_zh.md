@@ -10,7 +10,19 @@ agtok 是一个用于集中管理并一键切换三类常用 CLI 的 token 与 b
 
 ## 安装agtok
 
-待补充
+### 方法 1: 使用Homebrew安装
+
+```bash
+brew tap vaspike/homebrew-agtok && brew install agtok
+```
+### 方法 2: 使用发布的二进制文件
+1. 访问 [Releases page](https://github.com/vaspike/agtok/releases) 
+2. 下载对应版本的压缩包
+3. 解包
+4. 在终端中执行(这里是使用软链接,也可以直接cp到`/usr/local/bin/`下):
+   ```bash
+   sudo ln -sfn "$PWD/agtok" /usr/local/bin/agtok
+   ```
 
 ## 初始化预设,在你常用的终端中运行:
 
