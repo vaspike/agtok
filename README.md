@@ -45,7 +45,7 @@ agtok
   - Example (`claude.json`):
   ```json
   { "version": 1, "presets": [
-    { "alias": "dev", "url": "https://...", "token": "sk-...", "added_at": "20251031-0945" }
+    { "alias": "dev", "url": "https://...", "token": "sk-...", "model": "sonnet", "added_at": "20251031-0945" }
   ]}
   ```
   - In the TUI, press `p` to display the preset directory path in the top Status bar.
@@ -58,8 +58,13 @@ agtok
   - TUI: Press `a` to open the form (URL is required, Alias can be empty, Token is optional), press Enter to save.
   - CLI: `agtok presets add --agent <id> [--alias <name>] --url <u> [--token <t>]`
 
+- Update Presets (TUI)
+  - TUI: Select a row and press `u` to update fields. URL left blank = unchanged; Token `-` = clear (preset only); blank = unchanged; for Claude, Model empty = clear, non-empty = set.
+  - If updating the active row, Claude's Model on disk is strictly mirrored: empty removes `ANTHROPIC_MODEL`, non-empty writes/overwrites. Other agents update presets only.
+
 - Apply Presets to Agent Configuration
   - TUI: Select a preset and press `Enter`; writes are atomic with backups, permissions 0600; Claude only writes `ANTHROPIC_AUTH_TOKEN`.
+  - Claude Model: applying a Claude preset mirrors `ANTHROPIC_MODEL` on disk; if the preset has no model value, the key is removed; if it has a value, the key is written/overwritten.
   - CLI: `agtok apply --agent <id> --alias <name> [--dry-run]` or `agtok apply --agent <id> --url <u> [--token <t>]`
 
 - Rename/Delete Presets
@@ -67,7 +72,11 @@ agtok
 
 - Version Detection
   - TUI: The first column of each Agent's active row displays the version number; `Not installed` is shown if not installed, `Unknown` if parsing fails.
-  - Detection commands: `claude -v` / `gemini -v` / `codex -V`; asynchronous backfill, cached for 60s.
+  - Detection commands: `claude -v` / `gemini -v` / `codex -V`; asynchronous backfill, cached for 60s. Gemini detection allows a slightly longer timeout.
+
+- Status Bar & Details
+  - Top bar shows `agtok <version>` and a colored Status (green for OK, red for errors). Press `p` to show the presets dir path in Status.
+  - Details panel shows the selected row; for Claude, `Model` is displayed and `(not set)` appears in muted color when empty.
 
 - Running Modes
   - TUI: Run `agtok` without parameters to enter TUI; or explicitly `agtok tui`.

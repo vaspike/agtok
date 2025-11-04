@@ -42,7 +42,7 @@ agtok
   - 示例（`claude.json`）：
   ```json
   { "version": 1, "presets": [
-    { "alias": "dev", "url": "https://...", "token": "sk-...", "added_at": "20251031-0945" }
+    { "alias": "dev", "url": "https://...", "token": "sk-...", "model": "sonnet", "added_at": "20251031-0945" }
   ]}
   ```
   - TUI 中按 `p` 可在顶部 Status 显示预设目录路径
@@ -55,8 +55,13 @@ agtok
   - TUI：按 `a` 打开表单（URL 必填、Alias 可空、Token 可选），回车保存
   - CLI：`agtok presets add --agent <id> [--alias <name>] --url <u> [--token <t>]`
 
+- 更新预设（TUI）
+  - TUI：选中行按 `u` 进入更新。URL 留空=不改；Token 输入`-`=清空（仅预设）；留空=不改；Claude 的 Model 留空=清空，非空=写入。
+  - 若更新的是 Active 行：Claude 的磁盘 `ANTHROPIC_MODEL` 严格镜像预设（空则删除，非空则写入/覆盖）。其他 Agent 仅更新预设。
+
 - 应用预设到 Agent 配置
   - TUI：选中某条预设，按 `Enter`；写入原子且带备份，权限 0600；Claude 仅写入 `ANTHROPIC_AUTH_TOKEN`
+  - Claude Model：应用 Claude 预设时会镜像磁盘的 `ANTHROPIC_MODEL`；预设无值则删除该键，有值则写入/覆盖
   - CLI：`agtok apply --agent <id> --alias <name> [--dry-run]` 或 `agtok apply --agent <id> --url <u> [--token <t>]`
 
 - 重命名/删除预设
@@ -64,7 +69,11 @@ agtok
 
 - 版本检测
   - TUI：各 Agent 的 active 行第一列展示版本号；未安装显示 `Not installed`，无法解析显示 `Unknown`
-  - 检测命令：`claude -v` / `gemini -v` / `codex -V`；异步回填、缓存 60s
+  - 检测命令：`claude -v` / `gemini -v` / `codex -V`；异步回填、缓存 60s（gemini 探测超时时间更长）
+
+- 顶部状态与详情
+  - 顶部显示 `agtok <version>` 与彩色 Status（成功为绿色，失败为红色）。按 `p` 在 Status 显示预设目录路径。
+  - 详情区展示选中项；Claude 的 `Model` 会显示，未设置时以灰色 `(not set)` 占位。
 
 - 运行方式
   - TUI：不带参数运行 `agtok` 即进入 TUI；或显式 `agtok tui`
