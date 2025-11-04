@@ -13,3 +13,9 @@ type Provider interface {
     Validate(fields core.Fields) error
 }
 
+// Context keys for provider-specific controls
+type ctxKey string
+
+// CtxKeyClaudeClearModel: when ctx has this key set to true in Write,
+// Claude provider will remove ANTHROPIC_MODEL from settings.json
+var CtxKeyClaudeClearModel ctxKey = "claude_clear_model"

@@ -31,7 +31,12 @@ func detectVersion(id core.AgentID) (string, bool) {
     if _, err := exec.LookPath(bin); err != nil {
         return "Not installed", false
     }
-    ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+    // Default timeout 1200ms; gemini-cli may be slower to respond, extend by +3s
+    to := 1200 * time.Millisecond
+    if id == core.AgentGemini {
+        to += 3 * time.Second
+    }
+    ctx, cancel := context.WithTimeout(context.Background(), to)
     defer cancel()
     out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
     if err != nil && ctx.Err() == context.DeadlineExceeded {

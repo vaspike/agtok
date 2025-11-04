@@ -107,3 +107,31 @@ func RenamePreset(agent core.AgentID, oldAlias, newAlias string) error {
     if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { return err }
     return fsx.AtomicWrite(path, data, fs.FileMode(0o600))
 }
+
+// UpdatePreset updates fields of a preset. url/token/model are optional via pointers.
+// clearToken/clearModel indicate explicit clearing.
+func UpdatePreset(agent core.AgentID, oldAlias, newAlias string, url *string, token *string, model *string, clearToken bool, clearModel bool) error {
+    list, err := LoadPresets(agent)
+    if err != nil { return err }
+    idx := -1
+    for i, p := range list {
+        if p.Alias == oldAlias { idx = i }
+        if newAlias != oldAlias && p.Alias == newAlias {
+            return fmt.Errorf("alias already exists: %s", newAlias)
+        }
+    }
+    if idx < 0 { return fmt.Errorf("preset not found: %s", oldAlias) }
+    // alias
+    if newAlias != "" { list[idx].Alias = newAlias }
+    // url
+    if url != nil { list[idx].URL = *url }
+    // token (three-state)
+    if clearToken { list[idx].Token = "" } else if token != nil { list[idx].Token = *token }
+    // model (three-state), only meaningful for Claude but harmless elsewhere
+    if clearModel { list[idx].Model = "" } else if model != nil { list[idx].Model = *model }
+    pf := presetFile{Version: 1, Presets: list}
+    data, _ := json.MarshalIndent(&pf, "", "  ")
+    path := pathFor(agent)
+    if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { return err }
+    return fsx.AtomicWrite(path, data, fs.FileMode(0o600))
+}

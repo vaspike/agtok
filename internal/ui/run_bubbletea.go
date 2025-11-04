@@ -31,6 +31,7 @@ type row struct {
     alias string
     url   string
     token string
+    model string
     added string // create time (AddedAt) for presets; empty for active
 }
 
@@ -49,6 +50,7 @@ const (
     modeNew
     modeConfirmDel
     modeRename
+    modeUpdate
 )
 
 type model struct {
@@ -60,6 +62,7 @@ type model struct {
     aliasIn textinput.Model
     urlIn   textinput.Model
     tokIn   textinput.Model
+    modelIn textinput.Model
     formErr string
 
     status string
@@ -75,6 +78,9 @@ type model struct {
     // rename state
     renameOld string
     renameIn  textinput.Model
+
+    // update state
+    updOldAlias string
 }
 
 type verState struct {
@@ -100,9 +106,12 @@ func initialModel() model {
     m.aliasIn = textinput.New()
     m.urlIn = textinput.New()
     m.tokIn = textinput.New()
+    m.modelIn = textinput.New()
     m.urlIn.Placeholder = "https://..."
     m.aliasIn.Placeholder = "(optional)"
     m.tokIn.Placeholder = "(optional)"
+    // Model input is optional; show a gentle placeholder for clarity
+    m.modelIn.Placeholder = "(optional)"
     m.urlIn.Focus()
     m.verCache = map[core.AgentID]verState{}
     m.renameIn = textinput.New()
@@ -134,7 +143,10 @@ func (m *model) reloadAll() {
                 activeAdded = p.AddedAt
                 continue // do not duplicate in list
             }
-            filtered = append(filtered, storePreset{Alias: p.Alias, URL: p.URL, Token: p.Token, AddedAt: p.AddedAt})
+            // include Model as well so details reflect latest preset content
+            filtered = append(filtered, storePreset{
+                Alias: p.Alias, URL: p.URL, Token: p.Token, Model: p.Model, AddedAt: p.AddedAt,
+            })
         }
         // version: prefer cached within TTL; otherwise show loading placeholder
         if st, ok := m.verCache[id]; ok && time.Since(st.at) < verTTL {
@@ -145,10 +157,10 @@ func (m *model) reloadAll() {
             g.inst = true
         }
         // active row at top
-        g.rows = append(g.rows, row{kind: rowCurrent, alias: activeAlias, url: f.URL, token: f.Token, added: activeAdded})
+        g.rows = append(g.rows, row{kind: rowCurrent, alias: activeAlias, url: f.URL, token: f.Token, model: f.Model, added: activeAdded})
         // preset rows
         for _, p := range filtered {
-            g.rows = append(g.rows, row{kind: rowPreset, alias: p.Alias, url: p.URL, token: p.Token, added: p.AddedAt})
+            g.rows = append(g.rows, row{kind: rowPreset, alias: p.Alias, url: p.URL, token: p.Token, model: p.Model, added: p.AddedAt})
         }
         m.groups = append(m.groups, g)
     }
@@ -173,6 +185,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
             return m.updateConfirmKey(msg)
         case modeRename:
             return m.updateRenameKey(msg)
+        case modeUpdate:
+            return m.updateUpdateKey(msg)
         }
     case verMsg:
         // async version backfill
@@ -208,8 +222,18 @@ func (m model) updateTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
             // apply preset
             if prov := providers.NewProvider(g.id); prov != nil {
                 old, _ := prov.Read(context.Background())
-                diff := core.Diff(old, core.Fields{URL: sel.url, Token: sel.token})
-                if _, err := prov.Write(context.Background(), core.Fields{URL: sel.url, Token: sel.token}); err != nil {
+                fields := core.Fields{URL: sel.url, Token: sel.token}
+                ctx := context.Background()
+                if g.id == core.AgentClaude {
+                    if sel.model == "" {
+                        // enforce deletion to mirror preset without model
+                        ctx = context.WithValue(ctx, providers.CtxKeyClaudeClearModel, true)
+                    } else {
+                        fields.Model = sel.model
+                    }
+                }
+                diff := core.Diff(old, fields)
+                if _, err := prov.Write(ctx, fields); err != nil {
                     m.status = fmt.Sprintf("apply failed: %v", err)
                 } else {
                     m.status = "applied"
@@ -261,7 +285,7 @@ func (m model) updateTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
         if _, err := store.GetPreset(g.id, alias); err == nil {
             alias = alias + "-" + time.Now().Format("20060102-1504")
         }
-        pr := core.Preset{Alias: alias, URL: cur.URL, Token: cur.Token, AddedAt: time.Now().Format("20060102-1504")}
+        pr := core.Preset{Alias: alias, URL: cur.URL, Token: cur.Token, Model: cur.Model, AddedAt: time.Now().Format("20060102-1504")}
         if err := store.AddPreset(g.id, pr); err != nil {
             m.status = "init failed: " + err.Error()
             return m, nil
@@ -293,6 +317,26 @@ func (m model) updateTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
         m.renameIn.SetValue(sel.alias)
         m.renameIn.CursorEnd()
         m.renameIn.Focus()
+    case "u":
+        sel := g.rows[g.index]
+        // target alias: preset row always; active row only if it maps to a preset (has alias)
+        targetAlias := sel.alias
+        if sel.kind == rowCurrent && targetAlias == "" {
+            m.status = "no preset for active row"
+            return m, nil
+        }
+        if targetAlias == "" {
+            m.status = "no alias to update"
+            return m, nil
+        }
+        m.m = modeUpdate
+        m.updOldAlias = targetAlias
+        // prefill: alias/url; token为空（出于安全）；model仅在Claude下显示
+        m.aliasIn.SetValue(targetAlias)
+        m.urlIn.SetValue(sel.url)
+        m.tokIn.SetValue("")
+        m.modelIn.SetValue(sel.model)
+        m.urlIn.Focus(); m.aliasIn.Blur(); m.tokIn.Blur(); m.modelIn.Blur()
     case "q", "esc", "ctrl+c":
         return m, tea.Quit
     }
@@ -302,21 +346,32 @@ func (m model) updateTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) updateNewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
     switch msg.String() {
     case "tab":
-        if m.urlIn.Focused() {
-            m.aliasIn.Focus()
-            m.urlIn.Blur()
-        } else if m.aliasIn.Focused() {
-            m.tokIn.Focus()
-            m.aliasIn.Blur()
+        g := &m.groups[m.active]
+        if g.id == core.AgentClaude {
+            if m.urlIn.Focused() {
+                m.aliasIn.Focus(); m.urlIn.Blur()
+            } else if m.aliasIn.Focused() {
+                m.tokIn.Focus(); m.aliasIn.Blur()
+            } else if m.tokIn.Focused() {
+                m.modelIn.Focus(); m.tokIn.Blur()
+            } else {
+                m.urlIn.Focus(); m.modelIn.Blur()
+            }
         } else {
-            m.urlIn.Focus()
-            m.tokIn.Blur()
+            if m.urlIn.Focused() {
+                m.aliasIn.Focus(); m.urlIn.Blur()
+            } else if m.aliasIn.Focused() {
+                m.tokIn.Focus(); m.aliasIn.Blur()
+            } else {
+                m.urlIn.Focus(); m.tokIn.Blur()
+            }
         }
     case "enter":
         // validate and add
         alias := strings.TrimSpace(m.aliasIn.Value())
         url := strings.TrimSpace(m.urlIn.Value())
         tok := m.tokIn.Value()
+        model := m.modelIn.Value()
         if err := core.ValidateFields(core.Fields{URL: url, Token: tok}); err != nil {
             m.formErr = err.Error(); return m, nil
         }
@@ -327,7 +382,9 @@ func (m model) updateNewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
         if alias == "" { alias = time.Now().Format("20060102-1504") }
         // duplicate alias
         if _, err := store.GetPreset(g.id, alias); err == nil { m.formErr = "alias exists"; return m, nil }
-        if err := store.AddPreset(g.id, core.Preset{Alias: alias, URL: url, Token: tok, AddedAt: time.Now().Format("20060102-1504")}); err != nil {
+        pr := core.Preset{Alias: alias, URL: url, Token: tok, AddedAt: time.Now().Format("20060102-1504")}
+        if g.id == core.AgentClaude && strings.TrimSpace(model) != "" { pr.Model = model }
+        if err := store.AddPreset(g.id, pr); err != nil {
             m.formErr = err.Error(); return m, nil
         }
         m.m = modeTable
@@ -344,6 +401,7 @@ func (m model) updateNewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
         if m.urlIn.Focused() { m.urlIn, cmd = m.urlIn.Update(msg); return m, cmd }
         if m.aliasIn.Focused() { m.aliasIn, cmd = m.aliasIn.Update(msg); return m, cmd }
         if m.tokIn.Focused() { m.tokIn, cmd = m.tokIn.Update(msg); return m, cmd }
+        if m.modelIn.Focused() { m.modelIn, cmd = m.modelIn.Update(msg); return m, cmd }
     }
     return m, nil
 }
@@ -404,6 +462,102 @@ func (m model) updateRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
         var cmd tea.Cmd
         m.renameIn, cmd = m.renameIn.Update(msg)
         return m, cmd
+    }
+}
+
+func (m model) updateUpdateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+    switch msg.String() {
+    case "tab":
+        g := &m.groups[m.active]
+        if g.id == core.AgentClaude {
+            if m.urlIn.Focused() {
+                m.aliasIn.Focus(); m.urlIn.Blur()
+            } else if m.aliasIn.Focused() {
+                m.tokIn.Focus(); m.aliasIn.Blur()
+            } else if m.tokIn.Focused() {
+                m.modelIn.Focus(); m.tokIn.Blur()
+            } else {
+                m.urlIn.Focus(); m.modelIn.Blur()
+            }
+            return m, nil
+        }
+        // non-Claude: cycle url -> alias -> token -> url
+        if m.urlIn.Focused() {
+            m.aliasIn.Focus(); m.urlIn.Blur()
+        } else if m.aliasIn.Focused() {
+            m.tokIn.Focus(); m.aliasIn.Blur()
+        } else {
+            m.urlIn.Focus(); m.tokIn.Blur()
+        }
+        return m, nil
+    case "enter":
+        g := m.groups[m.active]
+        old := m.updOldAlias
+        newAlias := strings.TrimSpace(m.aliasIn.Value())
+        // URL tri-state: blank -> unchanged; '-' -> unchanged; filled -> change
+        var urlPtr *string
+        urlVal := strings.TrimSpace(m.urlIn.Value())
+        if urlVal != "" && urlVal != "-" { urlPtr = &urlVal }
+        // Token tri-state: blank -> unchanged; '-' -> clear; filled -> change
+        var tokPtr *string
+        tokVal := strings.TrimSpace(m.tokIn.Value())
+        tokClear := false
+        if tokVal == "-" { tokClear = true } else if tokVal != "" { tokPtr = &tokVal }
+        // Model clearing by empty value (Claude only). No '-' semantics.
+        var mdlPtr *string
+        mdlVal := strings.TrimSpace(m.modelIn.Value())
+        mdlClear := false
+        if g.id == core.AgentClaude {
+            if mdlVal == "" { mdlClear = true } else { mdlPtr = &mdlVal }
+        }
+        // alias validation (allow unchanged)
+        if newAlias == "" { newAlias = old }
+        if newAlias != old && !aliasRe.MatchString(newAlias) {
+            m.formErr = "invalid alias (allowed: A-Za-z0-9_- , len 1-32)"
+            return m, nil
+        }
+        if err := store.UpdatePreset(g.id, old, newAlias, urlPtr, tokPtr, mdlPtr, tokClear, mdlClear); err != nil {
+            m.formErr = err.Error()
+            return m, nil
+        }
+        // Apply if updating active row
+        applyNow := (g.rows[g.index].kind == rowCurrent)
+        if applyNow {
+            if prov := providers.NewProvider(g.id); prov != nil {
+                ctx := context.Background()
+                cur, _ := prov.Read(ctx)
+                if urlPtr != nil { cur.URL = *urlPtr }
+                if tokPtr != nil { cur.Token = *tokPtr }
+                if g.id == core.AgentClaude {
+                    if mdlClear { ctx = context.WithValue(ctx, providers.CtxKeyClaudeClearModel, true) }
+                    if mdlPtr != nil { cur.Model = *mdlPtr }
+                }
+                if _, err := prov.Write(ctx, cur); err != nil {
+                    m.status = "update failed to apply: " + err.Error()
+                } else {
+                    m.status = "updated & applied '" + newAlias + "'"
+                }
+            }
+        } else {
+            m.status = "updated '" + newAlias + "'"
+        }
+        m.m = modeTable
+        m.reloadAll()
+        // focus updated alias if present among presets
+        gg := &m.groups[m.active]
+        for i, r := range gg.rows { if r.kind==rowPreset && r.alias==newAlias { gg.index=i; break } }
+        return m, m.scheduleVersionCmds()
+    case "esc", "q":
+        m.m = modeTable
+        m.formErr = ""
+        return m, nil
+    default:
+        var cmd tea.Cmd
+        if m.urlIn.Focused() { m.urlIn, cmd = m.urlIn.Update(msg); return m, cmd }
+        if m.aliasIn.Focused() { m.aliasIn, cmd = m.aliasIn.Update(msg); return m, cmd }
+        if m.tokIn.Focused() { m.tokIn, cmd = m.tokIn.Update(msg); return m, cmd }
+        if m.modelIn.Focused() { m.modelIn, cmd = m.modelIn.Update(msg); return m, cmd }
+        return m, nil
     }
 }
 
@@ -487,6 +641,20 @@ func (m model) help() string {
         b.WriteString(styleKey.Render("[Esc]"))
         b.WriteString(" Cancel")
         return b.String()
+    } else if m.m == modeUpdate {
+        g := m.groups[m.active]
+        b.WriteString("Update: ")
+        b.WriteString(styleKey.Render(agentTitle(g.id)))
+        b.WriteString("  ")
+        b.WriteString(styleKey.Render(m.updOldAlias))
+        b.WriteString("  ")
+        b.WriteString(styleKey.Render("[Tab]"))
+        b.WriteString(" Next  ")
+        b.WriteString(styleKey.Render("[Enter]"))
+        b.WriteString(" Save  ")
+        b.WriteString(styleKey.Render("[Esc]"))
+        b.WriteString(" Cancel")
+        return b.String()
     }
     // Table mode
     // Agent group selector row with explicit mapping
@@ -517,6 +685,8 @@ func (m model) help() string {
     b.WriteString(" Path  ")
     b.WriteString(styleKey.Render("[e]"))
     b.WriteString(" Rename  ")
+    b.WriteString(styleKey.Render("[u]"))
+    b.WriteString(" Update  ")
     b.WriteString(styleKey.Render("[d]"))
     b.WriteString(" Delete  ")
     b.WriteString(styleKey.Render("[r]"))
@@ -540,7 +710,7 @@ func agentTitle(id core.AgentID) string {
 }
 
 // storePreset is a local mirror used to sort and filter
-type storePreset struct{ Alias, URL, Token, AddedAt string }
+type storePreset struct{ Alias, URL, Token, Model, AddedAt string }
 
 // computeWidths for columns: Agent(header only), Active, Alias, URL.
 func (m model) computeWidths() (wAgent, wActive, wAlias, wURL int) {
@@ -657,6 +827,14 @@ func (m model) renderDetailBottom() string {
     b.WriteString(fmt.Sprintf("Active: %s  Alias: %s  CreateTime: %s\n", activeMark, r.alias, r.added))
     b.WriteString(fmt.Sprintf("URL: %s\n", r.url))
     b.WriteString(fmt.Sprintf("Token: %s\n", util.Mask(r.token)))
+    if g.id == core.AgentClaude {
+        mv := r.model
+        if mv == "" {
+            // render placeholder in muted color, consistent with top bar version color
+            mv = styleMuted.Render("(not set)")
+        }
+        b.WriteString(fmt.Sprintf("Model: %s\n", mv))
+    }
     if m.m == modeNew {
         b.WriteString("\nAdd Preset for ")
         b.WriteString(agentTitle(g.id))
@@ -664,6 +842,9 @@ func (m model) renderDetailBottom() string {
         b.WriteString("URL:   "+m.urlIn.View()+"\n")
         b.WriteString("Alias: "+m.aliasIn.View()+"\n")
         b.WriteString("Token: "+m.tokIn.View()+"\n")
+        if g.id == core.AgentClaude {
+            b.WriteString("Model: "+m.modelIn.View()+"\n")
+        }
         if m.formErr != "" {
             b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(m.formErr)+"\n")
         }
@@ -677,6 +858,19 @@ func (m model) renderDetailBottom() string {
         b.WriteString(fmt.Sprintf("Agent: %s\n", agentTitle(g.id)))
         b.WriteString(fmt.Sprintf("Old: %s\n", m.renameOld))
         b.WriteString("New: "+m.renameIn.View()+"\n")
+        if m.formErr != "" {
+            b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(m.formErr)+"\n")
+        }
+    } else if m.m == modeUpdate {
+        b.WriteString("\nUpdate Preset:\n")
+        b.WriteString(fmt.Sprintf("Agent: %s\n", agentTitle(g.id)))
+        b.WriteString(fmt.Sprintf("Alias: %s\n", m.updOldAlias))
+        b.WriteString("New Alias: "+m.aliasIn.View()+"\n")
+        b.WriteString("URL:       "+m.urlIn.View()+"\n")
+        b.WriteString("Token:     "+m.tokIn.View()+"\n")
+        if g.id == core.AgentClaude {
+            b.WriteString("Model:     "+m.modelIn.View()+"\n")
+        }
         if m.formErr != "" {
             b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(m.formErr)+"\n")
         }

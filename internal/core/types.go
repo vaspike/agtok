@@ -14,6 +14,7 @@ const (
 type Fields struct {
     URL   string
     Token string
+    Model string // optional; used by Claude only
 }
 
 // DiskState holds actual values read from disk.
@@ -29,6 +30,7 @@ type Preset struct {
     Alias   string `json:"alias"`
     URL     string `json:"url"`
     Token   string `json:"token"`
+    Model   string `json:"model,omitempty"`
     AddedAt string `json:"added_at"` // UI does not display this
 }
 

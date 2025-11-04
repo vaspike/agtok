@@ -50,6 +50,7 @@ func (c *claude) Read(ctx context.Context) (core.Fields, error) {
     return core.Fields{
         URL:   s.Env["ANTHROPIC_BASE_URL"],
         Token: token,
+        Model: s.Env["ANTHROPIC_MODEL"],
     }, nil
 }
 
@@ -65,6 +66,12 @@ func (c *claude) Write(ctx context.Context, fields core.Fields) (core.Backup, er
     // allow empty token to keep existing; when provided, write only AUTH_TOKEN as requested
     if fields.Token != "" {
         s.Env["ANTHROPIC_AUTH_TOKEN"] = fields.Token
+    }
+    // write/clear model based on context and fields
+    if v, ok := ctx.Value(CtxKeyClaudeClearModel).(bool); ok && v {
+        delete(s.Env, "ANTHROPIC_MODEL")
+    } else if fields.Model != "" {
+        s.Env["ANTHROPIC_MODEL"] = fields.Model
     }
     out, err := json.MarshalIndent(&s, "", "  ")
     if err != nil { return core.Backup{}, err }
