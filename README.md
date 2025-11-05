@@ -1,3 +1,4 @@
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-informational?style=for-the-badge)
 ![DevSwitcher2 Logo](https://img.shields.io/badge/agtok-0.1.3-blue?style=for-the-badge)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/vaspike/agtok/total?style=for-the-badge&color=orange)
 
