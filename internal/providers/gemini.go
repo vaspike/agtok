@@ -26,7 +26,7 @@ func (g *gemini) Read(ctx context.Context) (core.Fields, error) {
         return core.Fields{}, err
     }
     defer f.Close()
-    var url, token string
+    var url, token, model string
     s := bufio.NewScanner(f)
     for s.Scan() {
         line := strings.TrimSpace(s.Text())
@@ -36,9 +36,10 @@ func (g *gemini) Read(ctx context.Context) (core.Fields, error) {
             v := strings.TrimSpace(line[i+1:])
             if k == "GOOGLE_GEMINI_BASE_URL" { url = v }
             if k == "GEMINI_API_KEY" { token = v }
+            if k == "GEMINI_MODEL" { model = v }
         }
     }
-    return core.Fields{URL: url, Token: token}, nil
+    return core.Fields{URL: url, Token: token, Model: model}, nil
 }
 
 func (g *gemini) Write(ctx context.Context, fields core.Fields) (core.Backup, error) {
@@ -59,22 +60,28 @@ func (g *gemini) Write(ctx context.Context, fields core.Fields) (core.Backup, er
     }
     if fields.URL != "" { content["GOOGLE_GEMINI_BASE_URL"] = fields.URL }
     if fields.Token != "" { content["GEMINI_API_KEY"] = fields.Token }
+    // model write/clear per context
+    if v, ok := ctx.Value(CtxKeyGeminiClearModel).(bool); ok && v {
+        delete(content, "GEMINI_MODEL")
+    } else if fields.Model != "" {
+        content["GEMINI_MODEL"] = fields.Model
+    }
     // rebuild .env (MVP: no comments preserved)
     var b strings.Builder
-    keys := []string{"GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"}
+    keys := []string{"GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", "GEMINI_MODEL"}
     for k, v := range content {
         // include any extra keys as well
-        if k != keys[0] && k != keys[1] {
+        if k != keys[0] && k != keys[1] && k != keys[2] {
             b.WriteString(k + "=" + v + "\n")
         }
     }
     // write our keys last in fixed order
     if v, ok := content[keys[0]]; ok { b.WriteString(keys[0] + "=" + v + "\n") }
     if v, ok := content[keys[1]]; ok { b.WriteString(keys[1] + "=" + v + "\n") }
+    if v, ok := content[keys[2]]; ok { b.WriteString(keys[2] + "=" + v + "\n") }
     if err := fsx.BackupFile(p); err != nil && !errors.Is(err, os.ErrNotExist) { return core.Backup{}, err }
     if err := fsx.AtomicWrite(p, []byte(b.String()), fs.FileMode(0o600)); err != nil { return core.Backup{}, err }
     return core.Backup{}, nil
 }
 
 func (g *gemini) Validate(f core.Fields) error { return core.ValidateFields(f) }
-

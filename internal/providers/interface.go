@@ -19,3 +19,7 @@ type ctxKey string
 // CtxKeyClaudeClearModel: when ctx has this key set to true in Write,
 // Claude provider will remove ANTHROPIC_MODEL from settings.json
 var CtxKeyClaudeClearModel ctxKey = "claude_clear_model"
+
+// Additional provider-specific context keys for model clearing
+var CtxKeyGeminiClearModel ctxKey = "gemini_clear_model"
+var CtxKeyCodexClearModel ctxKey = "codex_clear_model"

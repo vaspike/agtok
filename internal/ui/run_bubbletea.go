@@ -138,7 +138,7 @@ func (m *model) reloadAll() {
         activeAdded := ""
         filtered := make([]storePreset, 0, len(ps))
         for _, p := range ps {
-            if p.URL == f.URL && p.Token == f.Token {
+            if p.URL == f.URL && p.Token == f.Token && p.Model == f.Model {
                 activeAlias = p.Alias
                 activeAdded = p.AddedAt
                 continue // do not duplicate in list
@@ -224,13 +224,18 @@ func (m model) updateTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
                 old, _ := prov.Read(context.Background())
                 fields := core.Fields{URL: sel.url, Token: sel.token}
                 ctx := context.Background()
-                if g.id == core.AgentClaude {
-                    if sel.model == "" {
-                        // enforce deletion to mirror preset without model
+                // Strictly mirror model for all agents
+                if sel.model == "" {
+                    switch g.id {
+                    case core.AgentClaude:
                         ctx = context.WithValue(ctx, providers.CtxKeyClaudeClearModel, true)
-                    } else {
-                        fields.Model = sel.model
+                    case core.AgentGemini:
+                        ctx = context.WithValue(ctx, providers.CtxKeyGeminiClearModel, true)
+                    case core.AgentCodex:
+                        ctx = context.WithValue(ctx, providers.CtxKeyCodexClearModel, true)
                     }
+                } else {
+                    fields.Model = sel.model
                 }
                 diff := core.Diff(old, fields)
                 if _, err := prov.Write(ctx, fields); err != nil {
@@ -268,6 +273,8 @@ func (m model) updateTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
             m.status = "init failed: " + err.Error()
             return m, nil
         }
+        // migrate old presets on init: backfill missing model for Gemini/Codex; stamp config_version
+        _ = store.MigrateOnInit(g.id, cur.Model)
         if err := core.ValidateFields(cur); err != nil {
             m.status = "skip: current config invalid"
             return m, nil
@@ -275,7 +282,7 @@ func (m model) updateTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
         // duplicate by value
         ps, _ := store.LoadPresets(g.id)
         for _, p := range ps {
-            if p.URL == cur.URL && p.Token == cur.Token {
+            if p.URL == cur.URL && p.Token == cur.Token && p.Model == cur.Model {
                 m.status = "identical preset exists: " + p.Alias
                 return m, nil
             }
@@ -347,7 +354,7 @@ func (m model) updateNewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
     switch msg.String() {
     case "tab":
         g := &m.groups[m.active]
-        if g.id == core.AgentClaude {
+        if agentSupportsModel(g.id) {
             if m.urlIn.Focused() {
                 m.aliasIn.Focus(); m.urlIn.Blur()
             } else if m.aliasIn.Focused() {
@@ -376,14 +383,14 @@ func (m model) updateNewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
             m.formErr = err.Error(); return m, nil
         }
         g := &m.groups[m.active]
-        // duplicate by value
+        // duplicate by value (include model)
         ps, _ := store.LoadPresets(g.id)
-        for _, p := range ps { if p.URL==url && p.Token==tok { m.formErr = "preset with same values exists: "+p.Alias; return m, nil } }
+        for _, p := range ps { if p.URL==url && p.Token==tok && p.Model==strings.TrimSpace(model) { m.formErr = "preset with same values exists: "+p.Alias; return m, nil } }
         if alias == "" { alias = time.Now().Format("20060102-1504") }
         // duplicate alias
         if _, err := store.GetPreset(g.id, alias); err == nil { m.formErr = "alias exists"; return m, nil }
         pr := core.Preset{Alias: alias, URL: url, Token: tok, AddedAt: time.Now().Format("20060102-1504")}
-        if g.id == core.AgentClaude && strings.TrimSpace(model) != "" { pr.Model = model }
+        if agentSupportsModel(g.id) && strings.TrimSpace(model) != "" { pr.Model = strings.TrimSpace(model) }
         if err := store.AddPreset(g.id, pr); err != nil {
             m.formErr = err.Error(); return m, nil
         }
@@ -469,7 +476,7 @@ func (m model) updateUpdateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
     switch msg.String() {
     case "tab":
         g := &m.groups[m.active]
-        if g.id == core.AgentClaude {
+        if agentSupportsModel(g.id) {
             if m.urlIn.Focused() {
                 m.aliasIn.Focus(); m.urlIn.Blur()
             } else if m.aliasIn.Focused() {
@@ -503,13 +510,11 @@ func (m model) updateUpdateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
         tokVal := strings.TrimSpace(m.tokIn.Value())
         tokClear := false
         if tokVal == "-" { tokClear = true } else if tokVal != "" { tokPtr = &tokVal }
-        // Model clearing by empty value (Claude only). No '-' semantics.
+        // Model clearing by empty value (all agents). No '-' semantics.
         var mdlPtr *string
         mdlVal := strings.TrimSpace(m.modelIn.Value())
         mdlClear := false
-        if g.id == core.AgentClaude {
-            if mdlVal == "" { mdlClear = true } else { mdlPtr = &mdlVal }
-        }
+        if mdlVal == "" { mdlClear = true } else { mdlPtr = &mdlVal }
         // alias validation (allow unchanged)
         if newAlias == "" { newAlias = old }
         if newAlias != old && !aliasRe.MatchString(newAlias) {
@@ -528,10 +533,17 @@ func (m model) updateUpdateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
                 cur, _ := prov.Read(ctx)
                 if urlPtr != nil { cur.URL = *urlPtr }
                 if tokPtr != nil { cur.Token = *tokPtr }
-                if g.id == core.AgentClaude {
-                    if mdlClear { ctx = context.WithValue(ctx, providers.CtxKeyClaudeClearModel, true) }
-                    if mdlPtr != nil { cur.Model = *mdlPtr }
+                if mdlClear {
+                    switch g.id {
+                    case core.AgentClaude:
+                        ctx = context.WithValue(ctx, providers.CtxKeyClaudeClearModel, true)
+                    case core.AgentGemini:
+                        ctx = context.WithValue(ctx, providers.CtxKeyGeminiClearModel, true)
+                    case core.AgentCodex:
+                        ctx = context.WithValue(ctx, providers.CtxKeyCodexClearModel, true)
+                    }
                 }
+                if mdlPtr != nil { cur.Model = *mdlPtr }
                 if _, err := prov.Write(ctx, cur); err != nil {
                     m.status = "update failed to apply: " + err.Error()
                 } else {
@@ -712,6 +724,16 @@ func agentTitle(id core.AgentID) string {
 // storePreset is a local mirror used to sort and filter
 type storePreset struct{ Alias, URL, Token, Model, AddedAt string }
 
+// agentSupportsModel indicates whether the agent supports Model management.
+func agentSupportsModel(id core.AgentID) bool {
+    switch id {
+    case core.AgentClaude, core.AgentGemini, core.AgentCodex:
+        return true
+    default:
+        return false
+    }
+}
+
 // computeWidths for columns: Agent(header only), Active, Alias, URL.
 func (m model) computeWidths() (wAgent, wActive, wAlias, wURL int) {
     // Fixed columns (agent names like "[1] claude-code" need a bit more room)
@@ -827,14 +849,13 @@ func (m model) renderDetailBottom() string {
     b.WriteString(fmt.Sprintf("Active: %s  Alias: %s  CreateTime: %s\n", activeMark, r.alias, r.added))
     b.WriteString(fmt.Sprintf("URL: %s\n", r.url))
     b.WriteString(fmt.Sprintf("Token: %s\n", util.Mask(r.token)))
-    if g.id == core.AgentClaude {
-        mv := r.model
-        if mv == "" {
-            // render placeholder in muted color, consistent with top bar version color
-            mv = styleMuted.Render("(not set)")
-        }
-        b.WriteString(fmt.Sprintf("Model: %s\n", mv))
+    // Show Model for all agents
+    mv := r.model
+    if mv == "" {
+        // render placeholder in muted color, consistent with top bar version color
+        mv = styleMuted.Render("(not set)")
     }
+    b.WriteString(fmt.Sprintf("Model: %s\n", mv))
     if m.m == modeNew {
         b.WriteString("\nAdd Preset for ")
         b.WriteString(agentTitle(g.id))
@@ -842,9 +863,7 @@ func (m model) renderDetailBottom() string {
         b.WriteString("URL:   "+m.urlIn.View()+"\n")
         b.WriteString("Alias: "+m.aliasIn.View()+"\n")
         b.WriteString("Token: "+m.tokIn.View()+"\n")
-        if g.id == core.AgentClaude {
-            b.WriteString("Model: "+m.modelIn.View()+"\n")
-        }
+        b.WriteString("Model: "+m.modelIn.View()+"\n")
         if m.formErr != "" {
             b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(m.formErr)+"\n")
         }
@@ -868,9 +887,7 @@ func (m model) renderDetailBottom() string {
         b.WriteString("New Alias: "+m.aliasIn.View()+"\n")
         b.WriteString("URL:       "+m.urlIn.View()+"\n")
         b.WriteString("Token:     "+m.tokIn.View()+"\n")
-        if g.id == core.AgentClaude {
-            b.WriteString("Model:     "+m.modelIn.View()+"\n")
-        }
+        b.WriteString("Model:     "+m.modelIn.View()+"\n")
         if m.formErr != "" {
             b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(m.formErr)+"\n")
         }

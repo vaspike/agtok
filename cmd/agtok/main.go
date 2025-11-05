@@ -246,6 +246,8 @@ func initCmd(args []string) {
             errCount++
             continue
         }
+        // migrate old presets on init: backfill missing model for Gemini/Codex; stamp config_version
+        _ = store.MigrateOnInit(agent, cur.Model)
         if err := core.ValidateFields(cur); err != nil {
             fmt.Fprintf(os.Stderr, "[%s] skip: current config invalid (%v)\n", agent, err)
             continue
@@ -253,7 +255,7 @@ func initCmd(args []string) {
         presets, _ := store.LoadPresets(agent)
         duplicate := false
         for _, p := range presets {
-            if p.URL == cur.URL && p.Token == cur.Token {
+            if p.URL == cur.URL && p.Token == cur.Token && p.Model == cur.Model {
                 fmt.Printf("[%s] identical preset already exists (alias: %s), skipped\n", agent, p.Alias)
                 duplicate = true
                 break
@@ -265,7 +267,7 @@ func initCmd(args []string) {
             a = a + "-" + time.Now().Format("20060102-1504")
             fmt.Fprintf(os.Stderr, "[%s] alias already exists, using %s instead\n", agent, a)
         }
-        pr := core.Preset{Alias: a, URL: cur.URL, Token: cur.Token, AddedAt: time.Now().Format("20060102-1504")}
+        pr := core.Preset{Alias: a, URL: cur.URL, Token: cur.Token, Model: cur.Model, AddedAt: time.Now().Format("20060102-1504")}
         if err := store.AddPreset(agent, pr); err != nil {
             fmt.Fprintf(os.Stderr, "[%s] add preset error: %v\n", agent, err)
             errCount++

@@ -25,6 +25,7 @@ func (c *codex) Read(ctx context.Context) (core.Fields, error) {
     paths := c.Paths()
     // read base_url from toml
     var url string
+    var model string
     if f, err := os.Open(paths[0]); err == nil {
         defer f.Close()
         s := bufio.NewScanner(f)
@@ -35,11 +36,15 @@ func (c *codex) Read(ctx context.Context) (core.Fields, error) {
                 inSection = (line == "[model_providers.codex]")
                 continue
             }
-            if !inSection || line == "" || strings.HasPrefix(line, "#") { continue }
+            if line == "" || strings.HasPrefix(line, "#") { continue }
             if i := strings.Index(line, "="); i >= 0 {
                 k := strings.TrimSpace(line[:i])
                 v := strings.Trim(strings.TrimSpace(line[i+1:]), "\"'")
-                if k == "base_url" { url = v }
+                if inSection {
+                    if k == "base_url" { url = v }
+                } else {
+                    if k == "model" { model = v }
+                }
             }
         }
     }
@@ -51,7 +56,7 @@ func (c *codex) Read(ctx context.Context) (core.Fields, error) {
             token = m["OPENAI_API_KEY"]
         }
     }
-    return core.Fields{URL: url, Token: token}, nil
+    return core.Fields{URL: url, Token: token, Model: model}, nil
 }
 
 func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, error) {
@@ -59,10 +64,11 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
     // ensure dir
     _ = os.MkdirAll(filepath.Dir(paths[0]), 0o700)
     // update toml
-    // naive update: replace/ensure section and base_url line
+    // naive update: replace/ensure section and base_url line; root-level 'model'
     var lines []string
     var hadSection bool
     var wroteKey bool
+    var sawModel bool
     if b, err := os.ReadFile(paths[0]); err == nil {
         for _, ln := range strings.Split(string(b), "\n") {
             lines = append(lines, ln)
@@ -88,6 +94,23 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
                 wroteKey = true
                 continue
             }
+        } else {
+            // root level keys: parse k=v to match exact "model"
+            if i := strings.Index(line, "="); i >= 0 {
+                k := strings.TrimSpace(line[:i])
+                if k == "model" {
+                    sawModel = true
+                    if v, ok := ctx.Value(CtxKeyCodexClearModel).(bool); ok && v {
+                        // drop this line (clear model)
+                        continue
+                    }
+                    if fields.Model != "" {
+                        out = append(out, "model = \""+fields.Model+"\"")
+                        continue
+                    }
+                    // keep original if not clearing or setting
+                }
+            }
         }
         out = append(out, ln)
     }
@@ -97,6 +120,14 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
         wroteKey = true
     } else if inSection && !wroteKey {
         out = append(out, "base_url = \""+fields.URL+"\"")
+    }
+    // ensure model root-level line if needed
+    if !sawModel {
+        if v, ok := ctx.Value(CtxKeyCodexClearModel).(bool); ok && v {
+            // nothing to add (cleared)
+        } else if fields.Model != "" {
+            out = append([]string{"model = \""+fields.Model+"\""}, out...)
+        }
     }
     tomlOut := strings.Join(out, "\n")
     if err := fsx.BackupFile(paths[0]); err != nil && !errors.Is(err, os.ErrNotExist) { return core.Backup{}, err }
@@ -117,4 +148,3 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
 }
 
 func (c *codex) Validate(f core.Fields) error { return core.ValidateFields(f) }
-
