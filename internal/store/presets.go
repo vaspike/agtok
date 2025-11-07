@@ -7,6 +7,7 @@ import (
     "io/fs"
     "os"
     "path/filepath"
+    "runtime"
     core "tks/internal/core"
     "tks/internal/fsx"
     verinfo "tks/internal/version"
@@ -19,9 +20,28 @@ type presetFile struct {
 }
 
 func configDir() string {
+    // Windows: prefer %APPDATA%\token-switcher\presets
+    if runtime.GOOS == "windows" {
+        if d := os.Getenv("APPDATA"); d != "" {
+            return filepath.Join(d, "token-switcher", "presets")
+        }
+        // Fallback to USERPROFILE\.config
+        if h, _ := os.UserHomeDir(); h != "" {
+            return filepath.Join(h, ".config", "token-switcher", "presets")
+        }
+        return filepath.Join(".", ".config", "token-switcher", "presets")
+    }
+    // Unix-like
     if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
         return filepath.Join(d, "token-switcher", "presets")
     }
+    h, _ := os.UserHomeDir()
+    if h == "" { h = "." }
+    return filepath.Join(h, ".config", "token-switcher", "presets")
+}
+
+// legacyConfigDir returns the previous default directory used on non-Windows.
+func legacyConfigDir() string {
     h, _ := os.UserHomeDir()
     if h == "" { h = "." }
     return filepath.Join(h, ".config", "token-switcher", "presets")
@@ -63,7 +83,20 @@ func writePresetFile(agent core.AgentID, f presetFile) error {
     f.ConfigVersion = verinfo.Version
     data, _ := json.MarshalIndent(&f, "", "  ")
     path := pathFor(agent)
-    if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { return err }
+    dir := filepath.Dir(path)
+    if err := os.MkdirAll(dir, 0o700); err != nil { return err }
+    // Windows one-time migration: if writing to new location but legacy file exists, copy it
+    if runtime.GOOS == "windows" {
+        // If target file does not exist, but legacy file exists, copy bytes over (first write migration)
+        if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+            oldPath := filepath.Join(legacyConfigDir(), fmt.Sprintf("%s.json", string(agent)))
+            if b, err2 := os.ReadFile(oldPath); err2 == nil {
+                // ensure dir exists and write the legacy content first (best-effort)
+                _ = os.MkdirAll(dir, 0o700)
+                _ = fsx.AtomicWrite(path, b, fs.FileMode(0o600))
+            }
+        }
+    }
     return fsx.AtomicWrite(path, data, fs.FileMode(0o600))
 }
 

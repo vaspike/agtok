@@ -1,5 +1,7 @@
-
-![DevSwitcher2 Logo](https://img.shields.io/badge/agtok-0.1.4-blue?style=for-the-badge)
+![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white&color=0078D6)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=white&color=FCC624)
+![macOS](https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white&color=000000)
+![DevSwitcher2 Logo](https://img.shields.io/badge/agtok-1.0.1-blue?style=for-the-badge)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/vaspike/agtok/total?style=for-the-badge&color=orange)
 
 # 1. 简介
@@ -27,10 +29,15 @@ brew upgrade agtok
 1. 访问 [Releases page](https://github.com/vaspike/agtok/releases) 
 2. 下载对应版本的压缩包
 3. 解包
-4. 在终端中执行(这里是使用软链接,也可以直接cp到`/usr/local/bin/`下):
+4. (macOS, Linux)在终端中执行:
    ```bash
+   # 使用软链接
    sudo ln -sfn "$PWD/agtok" /usr/local/bin/agtok
+
+   # 或直接cp到`/usr/local/bin/`下
+   sudo cp "$PWD/agtok" /usr/local/bin
    ```
+5. (Windows) 将 `agtok.exe` 文件复制到 `C:\Program Files\agtok` 目录
 
 ## 初始化预设,在你常用的终端中运行:
 

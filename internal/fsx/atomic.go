@@ -5,6 +5,7 @@ import (
     "io/fs"
     "os"
     "path/filepath"
+    "runtime"
     "time"
 )
 
@@ -21,7 +22,34 @@ func AtomicWrite(path string, content []byte, mode fs.FileMode) error {
     }
     f, _ := os.Open(tmp)
     if f != nil { _ = f.Sync(); _ = f.Close() }
-    return os.Rename(tmp, path)
+    // Try rename, with Windows-specific retries and replacement fallback.
+    if err := os.Rename(tmp, path); err != nil {
+        // On Windows, rename fails if destination exists or is locked. Try limited retries.
+        if runtime.GOOS == "windows" {
+            // If destination exists, attempt replace by removing existing file then renaming.
+            // Also retry a few times to get past transient locks.
+            var last error = err
+            for i := 0; i < 5; i++ {
+                // If target exists, try remove and rename
+                if _, statErr := os.Stat(path); statErr == nil {
+                    _ = os.Remove(path)
+                }
+                if rerr := os.Rename(tmp, path); rerr == nil {
+                    return nil
+                } else {
+                    last = rerr
+                }
+                time.Sleep(50 * time.Millisecond)
+            }
+            // Cleanup tmp on failure
+            _ = os.Remove(tmp)
+            return last
+        }
+        // Non-Windows: best effort cleanup and return original error
+        _ = os.Remove(tmp)
+        return err
+    }
+    return nil
 }
 
 // BackupFile creates a timestamped .bak copy if the file exists.
@@ -37,4 +65,3 @@ func BackupFile(path string) error {
     if err != nil { return err }
     return os.WriteFile(bak, b, 0o600)
 }
-

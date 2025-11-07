@@ -27,6 +27,8 @@ TARGETS=(
   "darwin/arm64"
   "linux/amd64"
   "linux/arm64"
+  "windows/amd64"
+  "windows/arm64"
 )
 
 # Use a local go cache to avoid permission problems on CI/machines
@@ -37,25 +39,41 @@ for target in "${TARGETS[@]}"; do
   echo "- Building for $GOOS/$GOARCH ..."
 
   # Build binary (TUI tag by default), inject version via ldflags
-  OUT_BIN="$ROOT_DIR/bin/agtok-$GOOS-$GOARCH"
-  env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" GOCACHE="$GOCACHE" \
-    go build -tags tui -trimpath \
-      -ldflags "-s -w -X tks/internal/version.Version=$VERSION" \
-      -o "$OUT_BIN" ./cmd/agtok
+  if [[ "$GOOS" == "windows" ]]; then
+    OUT_BIN="$ROOT_DIR/bin/agtok-$GOOS-$GOARCH.exe"
+    env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" GOCACHE="$GOCACHE" \
+      go build -tags tui -trimpath \
+        -ldflags "-s -w -X tks/internal/version.Version=$VERSION" \
+        -o "$OUT_BIN" ./cmd/agtok
 
-  chmod +x "$OUT_BIN"
+    # Package zip with a single file named agtok.exe
+    STAGE_DIR="$ROOT_DIR/dist/stage-$GOOS-$GOARCH"
+    rm -rf "$STAGE_DIR" && mkdir -p "$STAGE_DIR"
+    cp "$OUT_BIN" "$STAGE_DIR/agtok.exe"
+    ZIP_PATH="$ROOT_DIR/dist/agtok-v$VERSION-$GOOS-$GOARCH.zip"
+    (cd "$STAGE_DIR" && zip -q -9 "$ZIP_PATH" agtok.exe)
+    echo "  -> $ZIP_PATH"
+    rm -rf "$STAGE_DIR"
+  else
+    OUT_BIN="$ROOT_DIR/bin/agtok-$GOOS-$GOARCH"
+    env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" GOCACHE="$GOCACHE" \
+      go build -tags tui -trimpath \
+        -ldflags "-s -w -X tks/internal/version.Version=$VERSION" \
+        -o "$OUT_BIN" ./cmd/agtok
 
-  # Package: tar must contain a single file named 'agtok'
-  STAGE_DIR="$ROOT_DIR/dist/stage-$GOOS-$GOARCH"
-  rm -rf "$STAGE_DIR" && mkdir -p "$STAGE_DIR"
-  cp "$OUT_BIN" "$STAGE_DIR/agtok"
+    chmod +x "$OUT_BIN"
 
-  TAR_PATH="$ROOT_DIR/dist/agtok-v$VERSION-$GOOS-$GOARCH.tar.gz"
-  tar -C "$STAGE_DIR" -czf "$TAR_PATH" agtok
-  echo "  -> $TAR_PATH"
+    # Package: tar must contain a single file named 'agtok'
+    STAGE_DIR="$ROOT_DIR/dist/stage-$GOOS-$GOARCH"
+    rm -rf "$STAGE_DIR" && mkdir -p "$STAGE_DIR"
+    cp "$OUT_BIN" "$STAGE_DIR/agtok"
 
-  rm -rf "$STAGE_DIR"
+    TAR_PATH="$ROOT_DIR/dist/agtok-v$VERSION-$GOOS-$GOARCH.tar.gz"
+    tar -C "$STAGE_DIR" -czf "$TAR_PATH" agtok
+    echo "  -> $TAR_PATH"
+
+    rm -rf "$STAGE_DIR"
+  fi
 done
 
 echo "Done. Artifacts in: $ROOT_DIR/dist"
-
