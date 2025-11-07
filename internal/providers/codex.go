@@ -23,29 +23,52 @@ func (c *codex) Paths() []string {
 
 func (c *codex) Read(ctx context.Context) (core.Fields, error) {
     paths := c.Paths()
-    // read base_url from toml
+    // read base_url from toml; provider can be model_providers.*; prefer codex, fallback to first found
     var url string
     var model string
     if f, err := os.Open(paths[0]); err == nil {
         defer f.Close()
         s := bufio.NewScanner(f)
-        inSection := false
+        inProviders := false
+        curHeader := ""
+        // preserve encounter order
+        providerOrder := []string{}
+        urlByProvider := map[string]string{}
+        selProvider := "" // from root-level model_provider
         for s.Scan() {
             line := strings.TrimSpace(s.Text())
             if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-                inSection = (line == "[model_providers.codex]")
+                inProviders = false
+                curHeader = ""
+                // detect provider section: [model_providers.xxx]
+                if strings.HasPrefix(line, "[model_providers.") && strings.HasSuffix(line, "]") {
+                    inProviders = true
+                    curHeader = line
+                    providerOrder = append(providerOrder, line)
+                }
                 continue
             }
             if line == "" || strings.HasPrefix(line, "#") { continue }
             if i := strings.Index(line, "="); i >= 0 {
                 k := strings.TrimSpace(line[:i])
                 v := strings.Trim(strings.TrimSpace(line[i+1:]), "\"'")
-                if inSection {
-                    if k == "base_url" { url = v }
+                if inProviders {
+                    if k == "base_url" { urlByProvider[curHeader] = v }
                 } else {
                     if k == "model" { model = v }
+                    if k == "model_provider" { selProvider = v }
                 }
             }
+        }
+        // choose url: prefer selected provider, else codex, else first provider
+        if selProvider != "" {
+            if v, ok := urlByProvider["[model_providers."+selProvider+"]"]; ok && v != "" { url = v }
+        }
+        if url == "" {
+            if v, ok := urlByProvider["[model_providers.codex]"]; ok && v != "" { url = v }
+        }
+        if url == "" {
+            for _, h := range providerOrder { if v := urlByProvider[h]; v != "" { url = v; break } }
         }
     }
     // read token from auth.json
@@ -64,9 +87,9 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
     // ensure dir
     _ = os.MkdirAll(filepath.Dir(paths[0]), 0o700)
     // update toml
-    // naive update: replace/ensure section and base_url line; root-level 'model'
+    // naive update: replace/ensure target provider section's base_url; root-level 'model'
     var lines []string
-    var hadSection bool
+    var hadTargetSection bool
     var wroteKey bool
     var sawModel bool
     if b, err := os.ReadFile(paths[0]); err == nil {
@@ -75,6 +98,36 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
         }
     }
     var out []string
+    // pre-scan to choose target provider header for writing
+    providerOrder := []string{}
+    hasCodex := false
+    selProvider := ""
+    inAny := false
+    for _, ln := range lines {
+        line := strings.TrimSpace(ln)
+        if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+            inAny = true
+            if line == "[model_providers.codex]" { hasCodex = true }
+            if strings.HasPrefix(line, "[model_providers.") && strings.HasSuffix(line, "]") {
+                providerOrder = append(providerOrder, line)
+            }
+            continue
+        }
+        if line == "" || strings.HasPrefix(line, "#") { continue }
+        if !inAny {
+            if i := strings.Index(line, "="); i >= 0 {
+                k := strings.TrimSpace(line[:i])
+                v := strings.Trim(strings.TrimSpace(line[i+1:]), "\"'")
+                if k == "model_provider" { selProvider = v }
+            }
+        }
+    }
+    targetHeader := "[model_providers.codex]"
+    if selProvider != "" {
+        targetHeader = "[model_providers." + selProvider + "]"
+    } else if !hasCodex && len(providerOrder) > 0 {
+        targetHeader = providerOrder[0]
+    }
     inSection := false
     for _, ln := range lines {
         line := strings.TrimSpace(ln)
@@ -83,8 +136,8 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
                 out = append(out, "base_url = \""+fields.URL+"\"")
                 wroteKey = true
             }
-            inSection = (line == "[model_providers.codex]")
-            if inSection { hadSection = true }
+            inSection = (line == targetHeader)
+            if inSection { hadTargetSection = true }
             out = append(out, ln)
             continue
         }
@@ -114,8 +167,9 @@ func (c *codex) Write(ctx context.Context, fields core.Fields) (core.Backup, err
         }
         out = append(out, ln)
     }
-    if !hadSection {
-        out = append(out, "[model_providers.codex]")
+    if !hadTargetSection {
+        // no target section exists; create it at EOF (prefer codex name or fallback)
+        out = append(out, targetHeader)
         out = append(out, "base_url = \""+fields.URL+"\"")
         wroteKey = true
     } else if inSection && !wroteKey {
