@@ -10,7 +10,7 @@ agtok 是一个用于集中管理并一键切换三类常用 CLI 的 token 与 b
 
 # 2. 预览图
 
-![TUI](tui-preview.png)
+![tui-preview.png](https://github.com/user-attachments/assets/8a6a8b57-3f3e-49f5-aba7-1c7355186d0f)
 
 # 3. 快速开始
 
